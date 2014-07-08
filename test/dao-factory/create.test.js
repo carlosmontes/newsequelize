@@ -24,7 +24,8 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
       data:         DataTypes.STRING,
       intVal:       DataTypes.INTEGER,
       theDate:      DataTypes.DATE,
-      aBool:        DataTypes.BOOLEAN
+      aBool:        DataTypes.BOOLEAN,
+      uniqueName:   { type: DataTypes.STRING, unique: true }
     })
 
     this.User.sync({ force: true }).success(function() {
@@ -109,6 +110,20 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
         expect(user.username).to.equal('Username')
         expect(user.data).to.equal('ThisIsData')
         expect(created).to.be.true
+        done()
+      })
+    })
+
+    it("supports .or() (only using default values)", function (done) {
+      this.User.findOrCreate(
+        Sequelize.or({username: 'Fooobzz'}, {secretValue: 'Yolo'}),
+        {username: 'Fooobzz', secretValue: 'Yolo'}
+      ).done(function (err, user, created) {
+        expect(err).not.to.be.ok
+        expect(user.username).to.equal('Fooobzz')
+        expect(user.secretValue).to.equal('Yolo')
+        expect(created).to.be.true
+
         done()
       })
     })
@@ -384,6 +399,31 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
               } else {
                 expect(err.message).to.match(/.*duplicate key value violates unique constraint.*/)
               }
+
+              done()
+            })
+          })
+        })
+      })
+    })
+
+    it("raises an error if saving an empty string into a column allowing null or URL", function(done) {
+      var StringIsNullOrUrl = this.sequelize.define('StringIsNullOrUrl', {
+        str: { type: Sequelize.STRING, allowNull: true, validate: { isURL: true } }
+      })
+
+      this.sequelize.options.omitNull = false
+
+      StringIsNullOrUrl.sync({ force: true }).success(function() {
+        StringIsNullOrUrl.create({ str: null }).success(function(str1) {
+          expect(str1.str).to.be.null
+
+          StringIsNullOrUrl.create({ str: 'http://sequelizejs.org' }).success(function(str2) {
+            expect(str2.str).to.equal('http://sequelizejs.org')
+
+            StringIsNullOrUrl.create({ str: '' }).error(function(err) {
+              expect(err).to.exist
+              expect(err.str[0]).to.match(/Validation isURL failed: str/)
 
               done()
             })
@@ -871,6 +911,18 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
       })
     })
 
+    it('properly handles a model with a length column', function (done) {
+      var UserWithLength = this.sequelize.define('UserWithLength', {
+        length: Sequelize.INTEGER
+      })
+
+      UserWithLength.sync({force:true}).success(function() {
+        UserWithLength.bulkCreate([{ length: 42}, {length: 11}]).success(function () {
+          done()
+        })
+      })
+    })
+
     it('stores the current date in createdAt', function(done) {
       var self = this
         , data = [{ username: 'Peter'},
@@ -909,7 +961,7 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
           {name: 'foo', code: '123'},
           {code: '1234'},
           {name: 'bar', code: '1'}
-        ], { validate: true }).error(function(errors) {
+        ], { validate: true }).error(function(errors) { 
           expect(errors).to.not.be.null
           expect(errors).to.be.instanceof(Array)
           expect(errors).to.have.length(2)
@@ -917,7 +969,7 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
           expect(errors[0].errors.name[0]).to.equal('name cannot be null')
           expect(errors[1].record.name).to.equal('bar')
           expect(errors[1].record.code).to.equal('1')
-          expect(errors[1].errors.code[0]).to.equal('String is not in range: code')
+          expect(errors[1].errors.code[0]).to.equal('Validation len failed: code')
           done()
         })
       })
@@ -989,6 +1041,47 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
         })
       })
     })
+
+    if (Support.getTestDialect() !== 'postgres') {
+      it("should support the ignoreDuplicates option", function(done) {
+        var self = this
+          , data = [{ uniqueName: 'Peter', secretValue: '42' },
+                    { uniqueName: 'Paul', secretValue: '23' }]
+
+        this.User.bulkCreate(data, { fields: ['uniqueName', 'secretValue'] }).success(function() {
+          data.push({ uniqueName: 'Michael', secretValue: '26' });
+          self.User.bulkCreate(data, { fields: ['uniqueName', 'secretValue'], ignoreDuplicates: true }).success(function() {
+            self.User.findAll({order: 'id'}).success(function(users) {
+              expect(users.length).to.equal(3)
+              expect(users[0].uniqueName).to.equal("Peter")
+              expect(users[0].secretValue).to.equal("42");
+              expect(users[1].uniqueName).to.equal("Paul")
+              expect(users[1].secretValue).to.equal("23");
+              expect(users[2].uniqueName).to.equal("Michael")
+              expect(users[2].secretValue).to.equal("26");
+              done()
+            });
+          });
+        })
+      })
+    } else {
+      it("should throw an error when the ignoreDuplicates option is passed", function(done) {
+        var self = this
+          , data = [{ uniqueName: 'Peter', secretValue: '42' },
+                    { uniqueName: 'Paul', secretValue: '23' }]
+
+        this.User.bulkCreate(data, { fields: ['uniqueName', 'secretValue'] }).success(function() {
+          data.push({ uniqueName: 'Michael', secretValue: '26' });
+
+          self.User.bulkCreate(data, { fields: ['uniqueName', 'secretValue'], ignoreDuplicates: true }).error(function(err) {
+            expect(err).to.exist
+            expect(err.message).to.match(/Postgres does not support the \'ignoreDuplicates\' option./)
+
+            done();
+          })
+        })
+      })
+    }
 
     describe('enums', function() {
       it('correctly restores enum values', function(done) {

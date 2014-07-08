@@ -5,12 +5,7 @@ var chai      = require('chai')
   , expect    = chai.expect
   , Support   = require(__dirname + '/support')
   , DataTypes = require(__dirname + "/../lib/data-types")
-  , dialect   = Support.getTestDialect()
-  , config    = require(__dirname + "/config/config")
-  , sinon     = require('sinon')
   , datetime  = require('chai-datetime')
-  , _         = require('lodash')
-  , moment    = require('moment')
   , async     = require('async')
 
 chai.use(datetime)
@@ -22,6 +17,42 @@ var sortById = function(a, b) {
 
 describe(Support.getTestDialectTeaser("Include"), function () {
   describe('find', function () {
+    it('should support a empty belongsTo include', function (done) {
+      var Company = this.sequelize.define('Company', {})
+        , User = this.sequelize.define('User', {})
+
+      User.belongsTo(Company, {as: 'Employer'})
+      this.sequelize.sync({force: true}).done(function () {
+        User.create().then(function () {
+          User.find({
+            include: [{model: Company, as: 'Employer'}]
+          }).done(function (err, user) {
+            expect(err).not.to.be.ok
+            expect(user).to.be.ok
+            done()
+          })
+        }, done)
+      })
+    })
+
+    it('should support a empty hasOne include', function (done) {
+      var Company = this.sequelize.define('Company', {})
+        , Person = this.sequelize.define('Person', {})
+
+      Company.hasOne(Person, {as: 'CEO'})
+      this.sequelize.sync({force: true}).done(function () {
+        Company.create().then(function () {
+          Company.find({
+            include: [{model: Person, as: 'CEO'}]
+          }).done(function (err, company) {
+            expect(err).not.to.be.ok
+            expect(company).to.be.ok
+            done()
+          })
+        }, done)
+      })
+    })
+
     it('should support a simple nested belongsTo -> belongsTo include', function (done) {
       var Task = this.sequelize.define('Task', {})
         , User = this.sequelize.define('User', {})
@@ -251,7 +282,7 @@ describe(Support.getTestDialectTeaser("Include"), function () {
               {title: 'Dress'},
               {title: 'Bed'}
             ]).done(function () {
-              Product.findAll().done(callback)
+              Product.findAll({order: [ ['id'] ]}).done(callback)
             })
           },
           tags: function(callback) {
@@ -260,7 +291,7 @@ describe(Support.getTestDialectTeaser("Include"), function () {
               {name: 'B'},
               {name: 'C'}
             ]).done(function () {
-              Tag.findAll().done(callback)
+              Tag.findAll({order: [ ['id'] ]}).done(callback)
             })
           },
           userProducts: ['user', 'products', function (callback, results) {
@@ -286,7 +317,8 @@ describe(Support.getTestDialectTeaser("Include"), function () {
               {model: Product, include: [
                 {model: Tag}
               ]}
-            ]
+            ],
+            order: [ ['id'], [Product, 'id'] ]
           }).done(function (err, user) {
             expect(err).not.to.be.ok
 
@@ -511,6 +543,142 @@ describe(Support.getTestDialectTeaser("Include"), function () {
           })
         })
       })
+    })
+
+    it('should support including date fields, with the correct timeszone', function (done) {
+      var User = this.sequelize.define('user', {
+          dateField: Sequelize.DATE
+        }, {timestamps: false})
+        , Group = this.sequelize.define('group', {
+          dateField: Sequelize.DATE
+        }, {timestamps: false})
+
+      User.hasMany(Group)
+      Group.hasMany(User)
+
+      this.sequelize.sync().success(function () {
+        User.create({ dateField: Date.UTC(2014, 1, 20) }).success(function (user) {
+          Group.create({ dateField: Date.UTC(2014, 1, 20) }).success(function (group) {
+            user.addGroup(group).success(function () {
+              User.find({
+                where: {
+                  id: user.id
+                }, 
+                include: [Group]
+              }).success(function (user) {
+                expect(user.dateField.getTime()).to.equal(Date.UTC(2014, 1, 20))
+                expect(user.groups[0].dateField.getTime()).to.equal(Date.UTC(2014, 1, 20))
+                
+                done()
+              })
+            })
+          })
+        })
+      })
+    })
+  })
+
+  describe('where', function () {
+    it('should support Sequelize.and()', function (done) {
+      var User = this.sequelize.define('User', {})
+        , Item = this.sequelize.define('Item', {'test': DataTypes.STRING})
+
+      User.hasOne(Item);
+      Item.belongsTo(User);
+
+      this.sequelize.sync().done(function() {
+        async.auto({
+          users: function(callback) {
+            User.bulkCreate([{}, {}, {}]).done(function() {
+              User.findAll().done(callback)
+            })
+          },
+          items: function(callback) {
+            Item.bulkCreate([
+              {'test': 'abc'},
+              {'test': 'def'},
+              {'test': 'ghi'}
+            ]).done(function() {
+              Item.findAll().done(callback)
+            })
+          },
+          associate: ['users', 'items', function(callback, results) {
+            var chainer = new Sequelize.Utils.QueryChainer()
+
+            var users = results.users
+            var items = results.items
+
+            chainer.add(users[0].setItem(items[0]))
+            chainer.add(users[1].setItem(items[1]))
+            chainer.add(users[2].setItem(items[2]))
+
+            chainer.run().done(callback)
+          }]
+        }, function() {
+          User.findAll({include: [
+            {model: Item, where: Sequelize.and({
+              test: 'def'
+            })}
+          ]}).done(function(err, result) {
+            expect(err).not.to.be.ok
+
+            expect(result.length).to.eql(1)
+            expect(result[0].item.test).to.eql('def')
+            done()
+          })
+        })
+      }) 
+    })
+
+    it('should support Sequelize.or()', function (done) {
+      var User = this.sequelize.define('User', {})
+        , Item = this.sequelize.define('Item', {'test': DataTypes.STRING})
+
+      User.hasOne(Item);
+      Item.belongsTo(User);
+
+      this.sequelize.sync().done(function() {
+        async.auto({
+          users: function(callback) {
+            User.bulkCreate([{}, {}, {}]).done(function() {
+              User.findAll().done(callback)
+            })
+          },
+          items: function(callback) {
+            Item.bulkCreate([
+              {'test': 'abc'},
+              {'test': 'def'},
+              {'test': 'ghi'}
+            ]).done(function() {
+              Item.findAll().done(callback)
+            })
+          },
+          associate: ['users', 'items', function(callback, results) {
+            var chainer = new Sequelize.Utils.QueryChainer()
+
+            var users = results.users
+            var items = results.items
+
+            chainer.add(users[0].setItem(items[0]))
+            chainer.add(users[1].setItem(items[1]))
+            chainer.add(users[2].setItem(items[2]))
+
+            chainer.run().done(callback)
+          }]
+        }, function() {
+          User.findAll({include: [
+            {model: Item, where: Sequelize.or({
+              test: 'def'
+            }, {
+              test: 'abc'
+            })}
+          ]}).done(function(err, result) {
+            expect(err).not.to.be.ok
+            expect(result.length).to.eql(2)
+            done()
+          })
+        })
+      }) 
     })
   })
 
