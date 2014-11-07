@@ -746,21 +746,22 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
                   { username: 'Bob',   secretValue: '43' }]
 
       this.User.bulkCreate(data).success(function() {
-        self.User.update({username: 'Bill'}, {secretValue: '42'}).done(function(err) {
-          expect(err).not.to.be.ok
-          self.User.findAll({order: 'id'}).success(function(users) {
-            expect(users.length).to.equal(3)
+        setTimeout(function () {
+          self.User.update({username: 'Bill'}, {secretValue: '42'}).done(function(err) {
+            expect(err).not.to.be.ok
+            self.User.findAll({order: 'id'}).success(function(users) {
+              expect(users.length).to.equal(3)
 
-            expect(users[0].username).to.equal("Bill")
-            expect(users[1].username).to.equal("Bill")
-            expect(users[2].username).to.equal("Bob")
+              expect(users[0].username).to.equal("Bill")
+              expect(users[1].username).to.equal("Bill")
+              expect(users[2].username).to.equal("Bob")
 
-            expect(parseInt(+users[0].updatedAt/5000, 10)).to.be.closeTo(parseInt(+new Date()/5000, 10), 1)
-            expect(parseInt(+users[1].updatedAt/5000, 10)).to.be.closeTo(parseInt(+new Date()/5000, 10), 1)
-
-            done()
+              expect(users[0].updatedAt).to.be.afterTime(users[2].updatedAt)
+              done()
+            })
           })
-        })
+        }, 1000);
+
       })
     })
 
@@ -775,14 +776,14 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
         self.User.update({username: 'Bill'}, {secretValue: '42'}).done(function(err, affectedRows) {
           expect(err).not.to.be.ok
           expect(affectedRows).to.equal(2)
-          
+
           done()
         })
 
         self.User.update({username: 'Bill'}, {secretValue: '44'}).done(function(err, affectedRows) {
           expect(err).not.to.be.ok
           expect(affectedRows).to.equal(0)
-          
+
           done()
         })
       })
@@ -790,9 +791,31 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
   })
 
   describe('destroy', function() {
-    it('supports transactions', function(done) {
+    it('supports transactions for non-paranoid tables', function(done) {
       Support.prepareTransactionTest(this.sequelize, function(sequelize) {
         var User = sequelize.define('User', { username: Sequelize.STRING })
+
+        User.sync({ force: true }).success(function() {
+          User.create({ username: 'foo' }).success(function() {
+            sequelize.transaction(function(t) {
+              User.destroy({}, { transaction: t }).success(function() {
+                User.count().success(function(count1) {
+                  User.count({ transaction: t }).success(function(count2) {
+                    expect(count1).to.equal(1)
+                    expect(count2).to.equal(0)
+                    t.rollback().success(function(){ done() })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+
+    it('supports transactions for paranoid tables', function(done) {
+      Support.prepareTransactionTest(this.sequelize, function(sequelize) {
+        var User = sequelize.define('User', { username: Sequelize.STRING }, { paranoid: true })
 
         User.sync({ force: true }).success(function() {
           User.create({ username: 'foo' }).success(function() {
@@ -960,14 +983,14 @@ describe(Support.getTestDialectTeaser("DAOFactory"), function () {
         self.User.destroy({secretValue: '42'}).done(function(err, affectedRows) {
           expect(err).not.to.be.ok
           expect(affectedRows).to.equal(2)
-          
+
           done()
         })
 
         self.User.destroy({secretValue: '44'}).done(function(err, affectedRows) {
           expect(err).not.to.be.ok
           expect(affectedRows).to.equal(0)
-          
+
           done()
         })
       })
